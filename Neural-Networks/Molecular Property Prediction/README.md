@@ -6,7 +6,7 @@ This project explores methods to improve a **chemical language model** for predi
 * **Task 2:** **Influence function**–based data selection (with **LiSSA** inverse-HVP approximation) to choose the most impactful external samples for training.&#x20;
 * **Task 3:** **Parameter-efficient fine-tuning (PEFT)** strategies — **BitFit**, **LoRA**, and **IA³** — to reduce compute while preserving accuracy.&#x20;
 
-> **NNTI Project (WiSe 2025)** — Abdelsalam Helala (7056985), Mostafa Hammouda (7058050), Loulwah Arnaout (7062523).&#x20;
+> **NNTI Project (WiSe 2025)** — Abdelsalam Helala , Mostafa Hammouda , Loulwah Arnaout .&#x20;
 
 ---
 
