@@ -1,5 +1,3 @@
----
-
 # Single-Cell Bioinformatics Projects
 
 This repository contains two analysis reports with executable RMarkdown notebooks:
@@ -10,8 +8,6 @@ This repository contains two analysis reports with executable RMarkdown notebook
 Each project directory includes the **.Rmd** (code + narrative) and a rendered **.pdf** report.
 
 > Authors: **Abdelsalam Helala**, **Ahmed Lamloum**.
-
----
 
 ## Repository structure
 
@@ -24,8 +20,6 @@ Single_cell_Bioinformatics/
     ├── Project 3- Spatial Transcriptomics.Rmd
     └── Project 3- Spatial Transcriptomics.pdf
 ```
-
----
 
 ## Quick start (R)
 
@@ -49,8 +43,6 @@ rmarkdown::render("SCB24_25__Spatial_Transcriptomics/Project 3- Spatial Transcri
 ```
 
 > **Data paths:** The notebooks assume local data layouts noted inside each `.Rmd`. Adjust `project_dir`/file paths as needed.
-
----
 
 ## Project 2 — scATAC-seq (ArchR pipeline)
 
@@ -87,8 +79,6 @@ Graph-based imputation **clarifies sparse signals** for top marker genes, improv
 ### TF motif activity (CIS-BP)
 
 CIS-BP annotations added; variable motifs projected on UMAP and profiled across clusters. Example motifs: **TAL1\_62** and **TAL2\_822** show cluster-specific activity patterns.
-
----
 
 ## Project 3 — Spatial Transcriptomics (10x Visium, Seurat)
 
@@ -134,12 +124,8 @@ Spatial analysis on two Visium sections: **loading images & counts → QC → SC
 
 > Note: Some code blocks in the PDF show placeholder objects (e.g., `merged_integrated`) to illustrate intended steps; ensure the integrated object is created and stored before running label transfer, SCDC, and CellChat sections.
 
----
-
 ## Reproducibility & tips
 
 * Set seeds where provided (e.g., `set.seed(42)`), and keep R/bioc package versions consistent.
 * For scATAC-seq, ensure **MACS2** is installed and on `PATH` for peak calling.
 * Spatial data require **Visium outputs** (Space Ranger image & HDF5 matrix); update `project_dir` in the `.Rmd` to your local paths.
-
----
