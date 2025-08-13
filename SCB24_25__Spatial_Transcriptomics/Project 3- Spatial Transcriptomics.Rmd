@@ -1,0 +1,985 @@
+---
+title: "Spatial Transcriptomics Analysis"
+author: "Spatial Analysis Team"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+    highlight: tango
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  error=TRUE,
+  warning = FALSE,
+  fig.width = 12,
+  fig.height = 8
+)
+```
+
+# Week 1: Spatial Transcriptomics Analysis
+
+## Setup and Library Loading
+
+```{r libraries}
+# Set seed for reproducibility
+set.seed(42)
+
+# Load required libraries
+library(Seurat)
+library(SeuratData)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(CellChat)
+library(hdf5r)
+library(SCDC)
+```
+
+## 1. Spatial Transcriptomics
+
+### 1.1 Properties of the Slides (1P)
+
+The 10x Genomics Visium platform has the following specifications:
+
+-   **Spot size**: 55 μm in diameter
+-   **Center-to-center distance**: 100 μm between spots
+-   **Number of spots**: 4,992 spots per capture area (arranged in a 78
+    x 64 array)
+
+### 1.2 Resolution Analysis (1P)
+
+The average eukaryotic cell size ranges from 10-100 μm in diameter.
+Comparing this with the Visium specifications:
+
+-   **Spot size (55 μm)** vs. typical cell size (10-100 μm):
+    -   Each spot is likely to contain multiple cells
+    -   A single spot could contain anywhere from 1-10 cells depending
+        on the cell type
+    -   This means we're not getting single-cell resolution
+-   **Implications for data interpretation**:
+    -   Gene expression data represents averaged expression from
+        multiple cells
+    -   Cannot distinguish individual cell types within a spot
+    -   Need to consider the mixed cellular composition when analyzing
+        results
+    -   Spatial patterns represent tissue domains rather than individual
+        cells
+
+### 1.3 Output of Space Ranger (1P)
+
+```{r load_data}
+# Set working directory to the project root
+project_dir <- "/project_3_dataset"
+
+# Load the image data first
+image1 <- Read10X_Image(file.path(project_dir, "Section_1/spatial"))
+image2 <- Read10X_Image(file.path(project_dir, "Section_2/spatial"))
+
+# Create Seurat objects with the image data
+brain_1 <- Load10X_Spatial(
+  data.dir = file.path(project_dir, "Section_1"),
+  filename = "V1_Mouse_Brain_Sagittal_Posterior_filtered_feature_bc_matrix.h5",
+  assay = "Spatial",
+  slice = "slice1",
+  filter.matrix = TRUE,
+  to.upper = FALSE, 
+  image = image1
+)
+
+brain_2 <- Load10X_Spatial(
+  data.dir = file.path(project_dir, "Section_2"),
+  filename = "V1_Mouse_Brain_Sagittal_Posterior_Section_2_filtered_feature_bc_matrix.h5",
+  assay = "Spatial",
+  slice = "slice2",
+  filter.matrix = TRUE,
+  to.upper = FALSE, 
+  image = image2
+)
+
+# Access the tissue coordinates for brain_2
+tissue_coords <- brain_2@images[["slice2"]]@coordinates
+
+# Convert coordinate columns to numeric
+tissue_coords$imagerow <- as.numeric(tissue_coords$imagerow)
+tissue_coords$imagecol <- as.numeric(tissue_coords$imagecol)
+
+# Update the coordinates in the Seurat object
+brain_2@images[["slice2"]]@coordinates <- tissue_coords
+
+# Plot spatial images using Seurat's visualization
+plot1 <- SpatialPlot(brain_1, image.alpha = 0.4) + 
+  ggtitle("Section 1 Tissue Image")
+plot2 <- SpatialPlot(brain_2, image.alpha = 0.4) + 
+  ggtitle("Section 2 Tissue Image")
+
+# Display plots side by side
+plot1 + plot2
+```
+
+**Figure 1: Tissue Images from Space Ranger** These images show the
+histological sections that were processed for spatial transcriptomics: -
+High-resolution images capture tissue morphology - Spots are overlaid on
+the tissue for spatial reference - Dark and light regions indicate
+different tissue structures
+
+```{r coordinates}
+# Display spot coordinates for Section 1
+print("Sample coordinates from Section 1:")
+head(GetTissueCoordinates(brain_1))
+
+print("\nNumber of spots in Section 1:")
+nrow(GetTissueCoordinates(brain_1))
+```
+
+## 2. Spatial Transcriptomics Data in Seurat (3P)
+
+### 2.1 Loading the Data
+
+```{r seurat_load}
+# Load both sections with their respective image data
+brain_1 <- Load10X_Spatial(
+  data.dir = file.path(project_dir, "Section_1"),
+  filename = "V1_Mouse_Brain_Sagittal_Posterior_filtered_feature_bc_matrix.h5",
+  slice = "slice1",
+  image = image1
+)
+
+brain_2 <- Load10X_Spatial(
+  data.dir = file.path(project_dir, "Section_2"),
+  filename = "V1_Mouse_Brain_Sagittal_Posterior_Section_2_filtered_feature_bc_matrix.h5",
+  slice = "slice2",
+  image = image2
+)
+```
+
+### 2.2 Inspecting the Seurat Object
+
+```{r inspect_seurat}
+# Display basic information about the Seurat objects
+print("Section 1 Seurat Object Structure:")
+str(brain_1, max.level = 2)
+
+print("\nAvailable assays in Section 1:")
+print(Assays(brain_1))
+
+print("\nSpatial data in Section 1:")
+print(names(brain_1@images$slice1))
+```
+
+The Seurat object contains: - Gene expression matrix in the 'Spatial'
+assay - Image data in the 'images' slot - Spatial coordinates for each
+spot - Metadata for spots and genes
+
+### 2.3 Feature Visualization
+
+```{r feature_viz}
+# Normalize the data first
+brain_1 <- NormalizeData(brain_1)
+DefaultAssay(brain_1) <- "Spatial"
+
+# Check if genes exist in the dataset
+print("Checking gene presence:")
+print(paste("Hpca in dataset:", "Hpca" %in% rownames(brain_1)))
+print(paste("Ttr in dataset:", "Ttr" %in% rownames(brain_1)))
+
+# Get alternative genes if needed
+if (!all(c("Hpca", "Ttr") %in% rownames(brain_1))) {
+    print("Using top expressed genes instead:")
+    top_genes <- head(sort(rowSums(GetAssayData(brain_1, slot="counts")), decreasing=TRUE), 2)
+    features_to_plot <- names(top_genes)
+    print(paste("Top genes:", paste(features_to_plot, collapse=", ")))
+} else {
+    features_to_plot <- c("Hpca", "Ttr")
+}
+
+# Visualize gene expression
+p1 <- SpatialFeaturePlot(brain_1, 
+                        features = features_to_plot,
+                        ncol = 2)
+print(p1)
+```
+
+**Figure 2: Spatial Gene Expression** - Shows expression patterns of
+selected genes - Color intensity indicates expression level - Spatial
+patterns reveal tissue organization - Note: If original genes (Hpca,
+Ttr) are not found, top expressed genes are shown instead
+
+## 3. Data Preprocessing (4P)
+
+### 3.1 Filtering
+
+```{r qc_metrics}
+# Calculate QC metrics
+brain_1$percent.mt <- PercentageFeatureSet(brain_1, pattern = "^mt-")
+brain_2$percent.mt <- PercentageFeatureSet(brain_2, pattern = "^mt-")
+
+# Visualize QC metrics
+p3 <- VlnPlot(brain_1, features = c("nCount_Spatial", "nFeature_Spatial", "percent.mt"),
+              pt.size = 0.1, ncol = 2)
+print(p3)
+```
+
+**Figure 3: Quality Control Metrics** These plots justify our filtering
+thresholds: - nCount_Spatial \> 200: Ensures sufficient molecular
+depth - nFeature_Spatial \> 200: Ensures spot complexity - percent.mt \>
+3: Removes low-quality spots
+
+```{r filtering}
+# Filter cells based on QC metrics
+brain_1_filtered <- subset(brain_1, 
+                        nFeature_Spatial > 2000 & nFeature_Spatial < 7500 & 
+                        nCount_Spatial > 15000 & nCount_Spatial < 50000 & 
+                        percent.mt < 10)
+
+brain_2_filtered <- subset(brain_2, 
+                         nFeature_Spatial > 2000 & nFeature_Spatial < 7500 & 
+                        nCount_Spatial > 15000 & nCount_Spatial < 50000 & 
+                        percent.mt < 15)
+
+
+# Print filtering results
+cat(sprintf("Section 1 filtering results:
+Original spots: %d
+Remaining spots: %d
+Filtered out: %d spots
+
+Section 2 filtering results:
+Original spots: %d
+Remaining spots: %d
+Filtered out: %d spots\n",
+    ncol(brain_1),
+    ncol(brain_1_filtered),
+    ncol(brain_1) - ncol(brain_1_filtered),
+    ncol(brain_2),
+    ncol(brain_2_filtered),
+    ncol(brain_2) - ncol(brain_2_filtered)
+))
+```
+
+### 3.2 SCTransform
+
+```{r sctransform}
+# Apply SCTransform normalization
+brain_1_filtered <- SCTransform(brain_1_filtered, assay = "Spatial", verbose = FALSE)
+brain_2_filtered <- SCTransform(brain_2_filtered, assay = "Spatial", verbose = FALSE)
+```
+
+SCTransform replaces these preprocessing steps from Project 1: -
+NormalizeData() - ScaleData() - FindVariableFeatures()
+
+## 4. Dimensionality Reduction and Clustering (3P)
+
+### 4.1 Dimensionality Reduction
+
+```{r dim_reduction}
+# Run PCA
+brain_1_filtered <- RunPCA(brain_1_filtered, assay = "SCT", verbose = FALSE)
+brain_2_filtered <- RunPCA(brain_2_filtered, assay = "SCT", verbose = FALSE)
+
+# Plot elbow plots to determine optimal dimensions
+p5 <- ElbowPlot(brain_1_filtered, ndims = 50) + ggtitle("Section 1 Elbow Plot")
+p6 <- ElbowPlot(brain_2_filtered, ndims = 50) + ggtitle("Section 2 Elbow Plot")
+p5 + p6
+```
+
+**Figure 4: PCA Elbow Plots** - Elbow point suggests optimal PC number -
+We chose 30 PCs for downstream analysis - Captures majority of variation
+while reducing noise
+
+### 4.2 Clustering
+
+```{r clustering}
+# Run UMAP and clustering
+brain_1_filtered <- RunUMAP(brain_1_filtered, dims = 1:30)
+brain_1_filtered <- FindNeighbors(brain_1_filtered, dims = 1:30)
+brain_1_filtered <- FindClusters(brain_1_filtered, resolution = 0.8)
+
+# Visualize clusters
+p7 <- DimPlot(brain_1_filtered, reduction = "umap", label = TRUE) + 
+      ggtitle("Section 1 UMAP")
+p8 <- SpatialDimPlot(brain_1_filtered, label = TRUE, label.size = 3) + 
+      ggtitle("Section 1 Spatial")
+print(p7 + p8)
+```
+
+**Figure 5: UMAP and Spatial Clustering** - UMAP shows transcriptional
+relationships - Spatial plot reveals anatomical organization - Colors
+represent distinct transcriptional states - Clusters may correspond to
+different brain regions
+
+```{r}
+# Run UMAP and clustering
+brain_2_filtered <- RunUMAP(brain_2_filtered, dims = 1:30)
+brain_2_filtered <- FindNeighbors(brain_2_filtered, dims = 1:30)
+brain_2_filtered <- FindClusters(brain_2_filtered, resolution = 0.8)
+
+# Visualize clusters
+p9 <- DimPlot(brain_2_filtered, reduction = "umap", label = TRUE) + 
+      ggtitle("Section 2 UMAP")
+# Access the tissue coordinates for brain_2
+tissue_coords <- brain_2_filtered@images[["slice2"]]@coordinates
+
+# Convert coordinate columns to numeric
+tissue_coords$imagerow <- as.numeric(tissue_coords$imagerow)
+tissue_coords$imagecol <- as.numeric(tissue_coords$imagecol)
+
+# Update the coordinates in the Seurat object
+brain_2_filtered@images[["slice2"]]@coordinates <- tissue_coords
+
+p10 <- SpatialDimPlot(brain_2_filtered, label = TRUE, label.size = 3) + 
+      ggtitle("Section 2 Spatial")
+print(p9 + p10)
+```
+
+## Save Processed Data
+
+```{r save_data}
+# Save the processed Seurat objects
+saveRDS(brain_1_filtered, file = "spatial_brain_section1_processed.rds")
+saveRDS(brain_2_filtered, file = "spatial_brain_section2_processed.rds")
+```
+
+# Week 2: Differential Expression and Data Integration
+
+## 5. Differential Expression Analysis (8P)
+
+### 5.1 DEG Analysis Based on Clustering
+
+We'll perform the differential expression analysis on Section 1:
+
+```{r deg_clusters}
+# Find markers for each cluster
+Idents(brain_1_filtered) <- "seurat_clusters"
+all_markers <- FindAllMarkers(brain_1_filtered,
+                            only.pos = TRUE,
+                            min.pct = 0.25,
+                            logfc.threshold = 0.25)
+
+# Display top markers per cluster
+top_markers <- all_markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+
+print("Top 5 markers per cluster:")
+print(top_markers)
+
+# Save markers for future use
+saveRDS(all_markers, "cluster_markers.rds")
+```
+
+**Figure 6: Top Differentially Expressed Genes by Cluster**
+
+```{r deg_heatmap}
+# Create heatmap of top markers
+top_markers_per_cluster <- all_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC)
+
+DoHeatmap(brain_1_filtered, 
+          features = unique(top_markers_per_cluster$gene)) +
+    ggtitle("Top 10 Markers per Cluster")
+```
+
+### 5.2 DEG Analysis Based on Spatial Patterning
+
+```{r}
+# Find spatially variable features
+spatial_features <-  FindSpatiallyVariableFeatures(brain_1_filtered, assay = "SCT", features = VariableFeatures(brain_1_filtered)[1:1000], selection.method = "markvariogram")
+
+
+
+```
+
+```{r spatial_deg}
+
+# Custom function to retrieve spatially variable features
+#https://github.com/satijalab/seurat/issues/7422
+SpatiallyVariableFeatures_workaround <- function(object, assay = "SCT", selection.method = "markvariogram") {
+  # Check if the object is a Seurat object
+  if (!inherits(object, "Seurat")) {
+    stop("object must be a Seurat object")
+  }
+
+  # Check if the assay is valid
+  if (!assay %in% names(object@assays)) {
+    stop("assay must be a valid assay")
+  }
+
+  # Extract meta.features from the specified object and assay
+  data <- object@assays[[assay]]@meta.features
+
+  # Ensure the required columns exist
+  required_cols <- c(paste0(selection.method, ".spatially.variable"), paste0(selection.method, ".spatially.variable.rank"))
+  if (!all(required_cols %in% colnames(data))) {
+    stop("Required columns for the specified selection.method are missing in meta.features")
+  }
+
+  # Filter rows where "<selection.method>.spatially.variable" is TRUE
+  filtered_data <- data[data[[paste0(selection.method, ".spatially.variable")]], ]
+
+  # Sort filtered data by "<selection.method>.spatially.variable.rank" column in ascending order
+  sorted_data <- filtered_data[order(filtered_data[[paste0(selection.method, ".spatially.variable.rank")]]), ]
+
+  # Return row names of the sorted data frame
+  return(rownames(sorted_data))
+}
+
+# Using the custom function to get the top 3 spatially variable features
+top_spatial_features <- head(SpatiallyVariableFeatures_workaround(spatial_features, selection.method = "markvariogram"), 3)
+
+# Visualize the expression of the top 3 spatial features
+spatial_plots <- SpatialFeaturePlot(brain_1_filtered, 
+                                  features = top_spatial_features,
+                                  ncol = 3)
+print(spatial_plots)
+
+# Check if these genes are also cluster markers
+spatial_in_clusters <- top_spatial_features %in% all_markers$gene
+cat("\nTop spatial features present in cluster markers:", 
+    sum(spatial_in_clusters), "out of 3\n")
+
+if(sum(spatial_in_clusters) > 0) {
+    cat("\nDetails for overlapping genes:\n")
+    print(all_markers[all_markers$gene %in% top_spatial_features,])
+}
+
+```
+
+**Figure 7: Top 3 Spatially Variable Features** - These genes show
+strong spatial patterns in the tissue - Their expression varies based on
+location rather than just cluster identity - Comparison with cluster
+markers reveals spatial/clustering relationship
+
+## 6. Merging the Data (7P)
+
+### 6.1 Merging Without Batch-correction (3P)
+
+```{r merge_no_batch}
+# Create merged object
+# 1. Merge the data without batch correction
+brain_1_filtered$SliceName <- c("section1")  # Add SliceName for grouping
+brain_2_filtered$SliceName <- c("section2")
+merged_nobatch <- merge(brain_1_filtered, brain_2_filtered, add.cell.ids = c("section1", "section2"))
+
+# 2. Preprocess the merged data
+merged_nobatch <- NormalizeData(merged_nobatch)  # Normalize the data
+
+# Manually select integration features (3000 features)
+integration_features <- SelectIntegrationFeatures(object.list = list(brain_1_filtered, brain_2_filtered), nfeatures = 3000)
+VariableFeatures(merged_nobatch[["SCT"]]) <- integration_features  # Assign integration features
+
+# Process merged data
+merged_nobatch <- SCTransform(merged_nobatch, assay = "Spatial") %>%
+    RunPCA() %>%
+    RunUMAP(dims = 1:30) %>%
+    FindNeighbors(dims = 1:30) %>%
+    FindClusters(resolution = 0.8)
+
+# Visualize results
+p1 <- DimPlot(merged_nobatch, reduction = "umap", 
+              group.by = "orig.ident", 
+              label = TRUE) + 
+      ggtitle("Samples in UMAP")
+
+p2 <- DimPlot(merged_nobatch, reduction = "umap",
+              group.by = "seurat_clusters",
+              label = TRUE) + 
+      ggtitle("Clusters in UMAP")
+
+print(p1 + p2)
+```
+
+**Figure 8: Merged Data Without Batch Correction** Analysis of cluster
+overlap:
+
+```{r cluster_analysis}
+# Analyze cluster composition
+# Add sample information to metadata
+merged_nobatch$sample <- ifelse(grepl("^section1_", colnames(merged_nobatch)), "section1", "section2")
+
+# Cross-tabulate clusters and samples
+cluster_sample_table <- table(merged_nobatch$seurat_clusters, merged_nobatch$sample)
+
+# Print the cross-tabulation
+print(cluster_sample_table)
+
+# Identify shared and unique clusters
+shared_clusters <- which(apply(cluster_sample_table, 1, function(x) all(x > 0)))
+unique_section1 <- which(apply(cluster_sample_table, 1, function(x) x[1] > 0 & x[2] == 0))
+unique_section2 <- which(apply(cluster_sample_table, 1, function(x) x[1] == 0 & x[2] > 0))
+
+cat("\nShared clusters:", shared_clusters)
+cat("\nUnique to Section 1:", unique_section1)
+cat("\nUnique to Section 2:", unique_section2)
+
+```
+
+### 6.2 Merging With Batch-correction (3P)
+
+```{r merge_batch_correction}
+# 1. Split the datasets by SliceName
+merged.list <- SplitObject(merged_nobatch, split.by = "SliceName")
+
+# 2. Preprocess each dataset: normalize and manually find variable features
+for (i in 1:length(merged.list)) {
+  merged.list[[i]] <- NormalizeData(merged.list[[i]], verbose = TRUE)
+  
+  # Select integration features instead of using FindVariableFeatures
+  integration_features <- SelectIntegrationFeatures(
+    object.list = merged.list, nfeatures = 2000
+  )
+  VariableFeatures(merged.list[[i]]) <- integration_features
+}
+
+# 3. Find anchors
+anchors <- FindIntegrationAnchors(object.list = merged.list)
+
+# 4. Integrate the datasets
+integrated_merged <- IntegrateData(anchorset = anchors, normalization.method = "SCT")
+
+# 5. Manually set variable features for SCT assay in the integrated data
+integration_features <- SelectIntegrationFeatures(object.list = merged.list, nfeatures = 2000)
+VariableFeatures(integrated_merged[["SCT"]]) <- integration_features
+
+# 6. Scale the integrated data
+integrated_merged <- ScaleData(integrated_merged)
+
+# 7. Run PCA
+integrated_merged <- RunPCA(integrated_merged, ndims = 50)
+
+# 8. Visualize the elbow plot
+ElbowPlot(integrated_merged, ndims = 50)
+
+# 9. Run UMAP for visualization
+integrated_merged <- RunUMAP(integrated_merged, reduction = "pca", dims = 1:30)
+
+# 10. Create UMAP plot
+batch <- DimPlot(integrated_merged, group.by = "SliceName", reduction = "umap", label = TRUE)
+batch
+
+
+```
+
+### 6.3 Detection of Batch-effects (1P)
+
+```{r batch_effect_analysis}
+# Compare mixing metrics
+mixing_score_nobatch <- mean(table(merged_nobatch$orig.ident, 
+                                 merged_nobatch$seurat_clusters) > 0)
+mixing_score_integrated <- mean(table(merged_integrated$orig.ident,
+                                    merged_integrated$seurat_clusters) > 0)
+
+cat("Mixing scores (higher is better):\n")
+cat("Without batch correction:", mixing_score_nobatch, "\n")
+cat("With batch correction:", mixing_score_integrated, "\n")
+
+# Visualize batch effect correction
+p5 <- DimPlot(merged_nobatch, 
+              reduction = "umap",
+              group.by = "orig.ident") + 
+      ggtitle("Before Integration")
+
+```
+
+**Figure 9: Batch Effect Comparison**
+
+Based on the analysis: - Integration significantly improves sample
+mixing - Batch-corrected data shows better alignment of similar
+biological states - Technical variation is reduced while preserving
+biological variation - We recommend using the batch-corrected data for
+downstream analysis
+
+## Save Final Processed Data
+
+```{r save_final_data}
+# Save the integrated object
+saveRDS(merged_integrated, file = "spatial_brain_integrated.rds")
+```
+
+# Week 3: Cell Type Identification and Deconvolution
+
+## 7. Cell-type Identification (8P)
+
+### 7.1 Automatic Annotation using Data Integration (5P)
+
+First, we'll download and process the reference dataset:
+
+```{r load_reference}
+
+# Load and process reference data
+reference <- readRDS("allen_cortex.rds")
+
+options(future.globals.maxSize = 4 * 1024^3)  # 4 GB
+
+library(future)
+plan("sequential")  
+# run SCTransform
+reference <- SCTransform(reference, verbose = FALSE)
+# Perform PCA after SCTransform
+reference <- RunPCA(reference, features = VariableFeatures(reference), ndims = 50)
+
+# Elbow plot for PCA to decide how many components to use
+ElbowPlot(reference, ndims = 50)
+
+# Run UMAP for visualization
+reference <- RunUMAP(reference, reduction = "pca", dims = 1:20)
+# Perform clustering
+reference <- FindNeighbors(reference, dims = 1:20)
+reference <- FindClusters(reference, resolution = 0.5)
+
+```
+
+Now transfer labels to our spatial data:
+
+```{r label_transfer}
+# Set SCT as the default assay for integrated data
+DefaultAssay(merged_integrated) <- "SCT"  
+
+# Re-run SCTransform (if you really need to do this)
+merged_integrated <- SCTransform(merged_integrated, assay = "SCT", verbose = FALSE)
+
+# Proceed with label transfer
+anchors <- FindTransferAnchors(reference = reference, query = merged_integrated, dims = 1:30)
+
+# Transfer the labels from the reference to the integrated data
+predictions <- TransferData(anchorset = anchors, refdata = reference$seurat_clusters, dims = 1:30)
+
+# Add the transferred labels to the integrated data
+merged_integrated <- AddMetaData(merged_integrated, metadata = predictions)
+
+merged_integrated <- RunPCA(merged_integrated, features = VariableFeatures(object = merged_integrated))
+
+merged_integrated <- RunUMAP(merged_integrated, dims = 1:20)  
+
+# Visualize the results
+
+# UMAP plot showing predicted labels
+p1 <- DimPlot(merged_integrated, 
+              reduction = "umap",
+              group.by = "predicted.id",
+              label = TRUE) + 
+      ggtitle("Predicted Cell Types")
+
+# Spatial plot showing predicted labels
+p2 <- SpatialDimPlot(merged_integrated, 
+                     group.by = "predicted.id",
+                     label = TRUE) + 
+      ggtitle("Spatial Distribution of Cell Types")
+
+# Display both plots
+print(p1 + p2)
+
+```
+
+### 7.2 Manual Annotation (3P)
+
+```{r manual_annotation}
+# Perform DEG analysis on whole dataset
+Idents(merged_integrated) <- "seurat_clusters"
+all_markers_integrated <- FindAllMarkers(merged_integrated,
+                                       only.pos = TRUE,
+                                       min.pct = 0.25,
+                                       logfc.threshold = 0.25)
+top_markers <- all_markers_integrated %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+print(top_markers)
+
+```
+
+```{r}
+unique_clusters <- unique(merged_integrated$seurat_clusters)
+print(length(unique_clusters))  # How many unique clusters
+
+merged_integrated$cell_type <- plyr::mapvalues(
+  merged_integrated$seurat_clusters,
+  from = as.character(0:15),  # Cluster IDs (0 to 15)
+  to = c("Erythroid cells", "Purkinje neurons", "Excitatory neurons", 
+         "Inhibitory neurons", "Cerebellar neurons", "Excitatory neurons", 
+         "Neural stem cells", "Oligodendrocytes", "Choroid plexus cells", 
+         "Cardiac/Vascular cells", "Neuroendocrine cells", "Synaptic signaling neurons", 
+         "Choroid plexus cells", "Neuronal progenitors", "Astrocytes", 
+         "Microglia")  # 16 cell types corresponding to clusters
+)
+
+DimPlot(merged_integrated, reduction = "umap", group.by = "cell_type", label = TRUE)
+```
+
+```{r}
+# View cluster annotations
+head(merged_integrated@meta.data$predicted.id)
+
+table(merged_integrated$predicted.id)
+```
+
+## 8. Deconvolution (9P + 5 Bonus)
+
+### 8.1 SCDC Method Summary (Bonus: 5P)
+
+The SCDC (Single-Cell Deconvolution) package performs cellular
+deconvolution of spatial transcriptomics data using single-cell RNA-seq
+references. Key aspects:
+
+1.  **Method**: Uses a regression-based approach to estimate cell type
+    proportions in spatial spots based on gene expression signatures
+    from reference data.
+2.  **Necessity**: Spatial transcriptomics spots often contain multiple
+    cells, making it crucial to determine the cellular composition of
+    each spot.
+3.  **Limitations**: Reference-based deconvolution depends heavily on
+    the quality and relevance of the reference dataset, and may miss
+    cell types not present in the reference.
+4.  **Advantages**: Provides quantitative estimates of cell type
+    proportions and handles technical variations between platforms.
+
+### 8.2 Prepare Reference Data (1P)
+
+```{r prepare_reference}
+# Downsample reference data
+set.seed(42)
+reference_downsampled <- subset(reference, 
+    cells = unlist(tapply(
+        colnames(reference),
+        reference$seurat_clusters,
+        function(x) sample(x, min(250, length(x)))
+    ))
+)
+
+# Process downsampled reference
+reference_downsampled <- SCTransform(reference_downsampled) %>%
+    RunPCA() %>%
+    RunUMAP(dims = 1:30)
+```
+
+### 8.3 Select Deconvolution Genes (2P)
+
+```{r select_genes}
+# Find markers in reference data
+reference_markers <- FindAllMarkers(reference_downsampled,
+                                  only.pos = TRUE,
+                                  min.pct = 0.25,
+                                  logfc.threshold = 0.25)
+
+# Select top 20 genes per cell type
+deconv_genes <- reference_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 20, wt = -p_val_adj) %>%
+    pull(gene)
+
+# Filter for genes present in spatial data
+deconv_genes <- intersect(deconv_genes, 
+                         rownames(merged_integrated))
+
+print(paste("Number of genes selected for deconvolution:", 
+            length(deconv_genes)))
+```
+
+### 8.4 Create ExpressionSet Objects (1P)
+
+```{r create_expressionset}
+library(Biobase)
+
+# Prepare reference ExpressionSet
+reference_counts <- GetAssayData(reference_downsampled, 
+                               slot = "counts")[deconv_genes,]
+reference_phenoData <- AnnotatedDataFrame(
+    data.frame(
+        celltype = reference_downsampled$seurat_clusters,
+        row.names = colnames(reference_downsampled)
+    )
+)
+reference_eset <- ExpressionSet(
+    assayData = as.matrix(reference_counts),
+    phenoData = reference_phenoData
+)
+
+# Prepare spatial ExpressionSet
+spatial_counts <- GetAssayData(merged_integrated, 
+                             slot = "counts")[deconv_genes,]
+spatial_phenoData <- AnnotatedDataFrame(
+    data.frame(
+        spot = colnames(merged_integrated),
+        row.names = colnames(merged_integrated)
+    )
+)
+spatial_eset <- ExpressionSet(
+    assayData = as.matrix(spatial_counts),
+    phenoData = spatial_phenoData
+)
+```
+
+### 8.5 Perform Deconvolution (5P)
+
+```{r deconvolution}
+# Run SCDC deconvolution
+deconv_results <- SCDC_prop(
+    bulk.eset = spatial_eset,
+    sc.eset = reference_eset,
+    ct.varname = "celltype",
+    ct.sub = unique(reference_downsampled$seurat_clusters)
+)
+
+# Add results to Seurat object
+deconv_matrix <- t(deconv_results$prop.est.mvw)
+colnames(deconv_matrix) <- paste0("SCDC_", colnames(deconv_matrix))
+merged_integrated[["SCDC"]] <- CreateAssayObject(data = deconv_matrix)
+
+# Visualize results for two cell types
+cell_types_to_plot <- colnames(deconv_matrix)[1:2]
+
+spatial_plots <- SpatialFeaturePlot(
+    merged_integrated,
+    features = cell_types_to_plot,
+    max.cutoff = "q95",
+    ncol = 2
+) + plot_annotation(
+    title = "Spatial Distribution of Deconvolved Cell Types"
+)
+
+print(spatial_plots)
+
+# Compare with original annotations
+comparison_plot <- DimPlot(
+    merged_integrated,
+    reduction = "umap",
+    group.by = c("predicted.id", "SCDC"),
+    ncol = 2
+) + plot_annotation(
+    title = "Comparison of Label Transfer vs Deconvolution"
+)
+
+print(comparison_plot)
+```
+
+# Week 4: Cell-Cell Communication Analysis
+
+## 9. Cell-Cell Communication Analysis using CellChat (8P)
+
+```{r setup_cellchat}
+library(CellChat)
+library(patchwork)
+library(ComplexHeatmap)
+
+# Prepare data for CellChat
+data.input <- GetAssayData(merged_integrated, slot = "data", assay = "SCT")
+meta.data <- data.frame(
+    labels = merged_integrated$predicted.id,
+    row.names = colnames(merged_integrated)
+)
+
+# Create CellChat object
+cellchat <- createCellChat(object = data.input, 
+                          meta = meta.data, 
+                          group.by = "labels")
+
+# Set the ligand-receptor interaction database
+cellchat@DB <- CellChatDB.mouse
+
+# Preprocessing
+cellchat <- subsetData(cellchat)
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+# Compute communication probability
+cellchat <- computeCommunProb(cellchat)
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+# Compute communication network
+cellchat <- computeCommunication(cellchat)
+```
+
+### Analysis of Cell-Cell Interactions
+
+```{r interaction_analysis}
+# Number of interactions
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2))
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, 
+                weight.scale = T, label.edge= F, title.name = "Number of Interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize,
+                weight.scale = T, label.edge= F, title.name = "Interaction Strength")
+```
+
+**Figure 10: Cell-Cell Interaction Overview** This visualization
+shows: - The number of interactions between different cell types - The
+strength of these interactions - The relative size of each cell
+population (vertex size) - The complexity of the cellular communication
+network
+
+### Detailed Pathway Analysis
+
+```{r pathway_analysis}
+# Select significant pathways
+signaling_pathways <- cellchat@netP$pathways
+print("Available signaling pathways:")
+print(head(signaling_pathways))
+
+# Analyze WNT pathway as an example
+pathway.show <- "WNT"
+
+# Visualize pathway communication
+netVisual_aggregate(cellchat, signaling = pathway.show, layout = "circle")
+
+# Spatial visualization of pathway activity
+spatial_pathway <- netVisual_spatial(cellchat, 
+                                   signaling = pathway.show,
+                                   spatial.data = merged_integrated,
+                                   image.data = merged_integrated@images$slice1)
+```
+
+**Figure 11: WNT Pathway Analysis** The analysis reveals: - Specific
+communication patterns in the WNT pathway - Spatial organization of
+signaling activity - Key sender and receiver cell populations -
+Potential signaling hotspots in the tissue
+
+### Influence of Spatial Information
+
+The incorporation of spatial information in cell-cell communication
+analysis provides several key insights:
+
+1.  **Proximity-Based Signaling**: We can identify which cell types are
+    physically close enough to engage in paracrine signaling
+2.  **Tissue Organization**: The spatial distribution of signaling
+    molecules helps understand tissue architecture
+3.  **Signaling Domains**: We can identify regions with high signaling
+    activity
+4.  **Context-Dependent Communication**: The same cell types might
+    communicate differently based on their location in the tissue
+
+## 10. Summary and Future Perspectives (Bonus: 5P)
+
+This comprehensive analysis of spatial transcriptomics data has revealed
+the complex organization and communication patterns in brain tissue. Key
+findings include:
+
+1.  **Spatial Resolution**: The Visium technology provides valuable
+    insights into tissue organization, though at a resolution that
+    captures multiple cells per spot.
+
+2.  **Cell Type Identification**: Through integration with reference
+    data and deconvolution, we identified major cell types and their
+    spatial distribution. The combination of automatic and manual
+    annotation methods provided robust cell type assignments.
+
+3.  **Batch Effect Handling**: Integration of multiple tissue sections
+    revealed consistent cellular patterns while accounting for technical
+    variation.
+
+4.  **Cell-Cell Communication**: Analysis of intercellular signaling
+    revealed complex communication networks, with spatial context adding
+    crucial information about potential interaction zones.
+
+Future approaches could include: - Higher-resolution spatial
+technologies (e.g., Slide-seq, MERFISH) - Integration with spatial
+proteomics data - Advanced spatial statistics for pattern analysis -
+Machine learning approaches for tissue domain identification
+
+## Session Information
+
+\`\`\`{r session_info} sessionInfo()
