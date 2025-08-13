@@ -1,0 +1,14 @@
+# Computing mathematical expressions
+# Compute with Python
+# 30! mod 59
+# 2100 mod 7
+# c. the integer part of the division of
+# the integer obtained by concatenating 99 9s, divided by 25
+# d. How many bits are needed to represent 3333 ?
+# e. How many digits does the decimal representation of 3333 have ?
+# f. Find lowest and highest value of the absolute values
+# of the numbers −10, 5, 20, −35.
+# g. Calculate the area of a circle with radius 3.
+# h. Find the number of ±1 walks of 20 steps that start and end in 0,
+# i.e., where in each step, your “position” increases or decreases by 1.
+# i. The size of the human genome is approx. n = 3 100 000 000. What is log2 (n) ?
