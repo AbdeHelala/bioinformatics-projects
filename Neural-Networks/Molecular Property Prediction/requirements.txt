@@ -1,0 +1,7 @@
+torch==2.5.1+cu121
+datasets==3.3.1
+transformers==4.47.0
+scikit-learn==1.2.2
+pandas==2.2.3
+tqdm==4.67.1
+matplotlib==3.7.5
