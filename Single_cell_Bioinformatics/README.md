@@ -24,9 +24,6 @@ Single_cell_Bioinformatics/
 └── SCB24_25__Spatial_Transcriptomics/
     ├── Project 3- Spatial Transcriptomics.Rmd
     └── Project 3- Spatial Transcriptomics.pdf
-```
-
-If you handle large outputs (e.g., PDFs/RDS), consider Git LFS (already set up for `*.pdf`).
 
 ---
 
